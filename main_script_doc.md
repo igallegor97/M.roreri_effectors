@@ -1,6 +1,6 @@
 # Integration Script: Prediction of Secreted Effectors in *Moniliophthora roreri*
 
-This script, `integrate_results.py`, performs the integration and filtering of prediction results obtained from three bioinformatics tools:
+This script, `integrated_results.py`, performs the integration and filtering of prediction results obtained from three bioinformatics tools:
 
 - **SignalP 6.0**: predicts signal peptides (secretion signals).
 - **DeepTMHMM**: predicts transmembrane domains.
