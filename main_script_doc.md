@@ -46,7 +46,9 @@ These should be generated beforehand using the respective tools:
 This script was developed as part of the project:
 
 > Prediction of Secreted Effectors in Moniliophthora roreri
+> 
 > Bioinformatica e Genomica, cen5789
+> 
 > CENA, Universidade de São Paulo, 2025
 
 Developed by Isabella Gallego Rendón.
