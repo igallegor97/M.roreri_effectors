@@ -3,9 +3,12 @@ import glob
 import csv
 from Bio import SeqIO
 import matplotlib.pyplot as plt
-import re
+import seaborn as sns
+import pandas as pd
+from matplotlib_venn import venn3
 
 def load_lengths(fasta_files):
+    """Loads protein lengths from FASTA files."""
     lengths = {}
     for file in fasta_files:
         for record in SeqIO.parse(file, "fasta"):
@@ -13,149 +16,162 @@ def load_lengths(fasta_files):
     return lengths
 
 def load_signalp_predictions(gff_files):
+    """Extracts proteins with signal peptides from SignalP GFF files."""
     signalp_hits = set()
     for file in gff_files:
-        print(f"\nLeyendo archivo SignalP: {file}")  # Debug
         with open(file) as f:
             for line in f:
                 if not line.startswith("#") and line.strip():
                     cols = line.strip().split('\t')
-                    print(f"Línea procesada: {cols}")  # Debug
-                    if len(cols) >= 4 and cols[2] == "signal_peptide":  # Cambié cols[3] → cols[2] (índice base 0)
-                        protein_id = cols[0]
-                        print(f"SignalP hit encontrado: {protein_id}")  # Debug
-                        signalp_hits.add(protein_id)
-    print(f"\nTotal SignalP hits: {len(signalp_hits)}")  # Debug
+                    if len(cols) >= 4 and cols[2] == "signal_peptide":
+                        signalp_hits.add(cols[0])
     return signalp_hits
 
 def load_tmhmm_predictions(gff_files):
+    """Extracts proteins with transmembrane domains from TMHMM GFF files."""
     tmhmm_hits = set()
     for file in gff_files:
-        print(f"\nLeyendo archivo TMHMM: {file}")  # Debug
         with open(file) as f:
             for line in f:
                 if line.startswith("#") and "Number of predicted TMRs:" in line:
                     parts = line.strip().split()
-                    protein_id = parts[1]  # Asumiendo formato "# tr_ID_ID_MONRR"
-                    num_tmrs = int(parts[-1])
-                    print(f"Proteína: {protein_id}, TMRs: {num_tmrs}")  # Debug
-                    if num_tmrs > 0:
-                        tmhmm_hits.add(protein_id)
-    print(f"\nTotal TMHMM hits: {len(tmhmm_hits)}")  # Debug
+                    if int(parts[-1]) > 0:
+                        tmhmm_hits.add(parts[1])
     return tmhmm_hits
 
 def load_effector_predictions(fasta_files):
-    effector_ids = set()
-    for file in fasta_files:
-        for record in SeqIO.parse(file, "fasta"):
-            effector_ids.add(record.id)
-    return effector_ids
+    """Loads IDs of proteins predicted as effectors by EffectorP."""
+    return {record.id for file in fasta_files for record in SeqIO.parse(file, "fasta")}
 
 def plot_summary(total, n_signal, n_tm, n_effector, n_final):
-    labels = [
-        'Total proteins',
-        'Signal peptide',
-        'Transmembrane domains',
-        'EffectorP effectors',
-        'Final candidates'
-    ]
+    """Summary bar chart."""
+    labels = ['Total proteins', 'Signal peptide', 'TM domains', 'EffectorP effectors', 'Final candidates']
     values = [total, n_signal, n_tm, n_effector, n_final]
     colors = ['#d9d9d9', '#80b1d3', '#fb8072', '#b3de69', '#ffed6f']
 
     plt.figure(figsize=(10, 6))
     bars = plt.bar(labels, values, color=colors)
     plt.title('Summary of Protein Features')
-    plt.ylabel('Number of proteins')
+    plt.ylabel('Count')
     plt.xticks(rotation=30, ha='right')
-    plt.tight_layout()
-
+    
     for bar in bars:
         yval = bar.get_height()
-        plt.text(bar.get_x() + bar.get_width()/2.0, yval + 10, int(yval), ha='center', va='bottom')
-
+        plt.text(bar.get_x() + bar.get_width()/2, yval + 5, int(yval), ha='center', va='bottom')
+    
+    plt.tight_layout()
     plt.savefig("summary_plot.png")
-    print("Summary plot saved as summary_plot.png")
 
-def integrate_data(lengths, signalp_hits, tmhmm_hits, effector_ids, output_csv, filtered_csv, summary_file=None):
+def plot_length_distribution(lengths, final_candidates):
+    """Distribution of lengths: all proteins vs final candidates."""
+    plt.figure(figsize=(10, 6))
+    plt.hist([list(lengths.values()), [lengths[pid] for pid in final_candidates]],
+             bins=30, alpha=0.7, label=['All proteins', 'Final candidates'])
+    plt.xlabel('Protein Length (aa)')
+    plt.ylabel('Frequency')
+    plt.legend()
+    plt.title('Protein Length Distribution')
+    plt.savefig("length_distribution.png")
+
+def plot_venn_diagram(signalp, tmhmm, effectors):
+    """Venn diagram showing overlap between tools."""
+    plt.figure(figsize=(8, 8))
+    venn3([signalp, effectors, tmhmm], ('SignalP', 'EffectorP', 'TMHMM'))
+    plt.title("Tool Prediction Overlap")
+    plt.savefig("venn_diagram.png")
+
+def plot_feature_correlation(lengths, signalp, tmhmm, effectors):
+    """Heatmap showing correlation between features."""
+    data = []
+    for pid in lengths:
+        data.append({
+            'Length': lengths[pid],
+            'SignalP': int(pid in signalp),
+            'TMHMM': int(pid in tmhmm),
+            'EffectorP': int(pid in effectors)
+        })
+    
+    plt.figure(figsize=(8, 6))
+    sns.heatmap(pd.DataFrame(data).corr(), annot=True, cmap='coolwarm', vmin=-1, vmax=1)
+    plt.title("Feature Correlation")
+    plt.tight_layout()
+    plt.savefig("correlation_heatmap.png")
+
+def integrate_data(lengths, signalp, tmhmm, effectors, output_csv, filtered_csv, summary_file):
+    """Integrates data and generates plots."""
     total = len(lengths)
-    n_signal = 0
-    n_tm = 0
-    n_effector = 0
-    n_final_candidates = 0
+    stats = {
+        'signal': sum(1 for pid in lengths if pid in signalp),
+        'tm': sum(1 for pid in lengths if pid in tmhmm),
+        'effector': sum(1 for pid in lengths if pid in effectors),
+        'final': []
+    }
 
-    with open(output_csv, "w", newline='') as out_all, open(filtered_csv, "w", newline='') as out_filtered:
-        writer_all = csv.writer(out_all)
-        writer_filtered = csv.writer(out_filtered)
-
-        header = ["Protein ID", "Signal Peptide", "Transmembrane Domain", "EffectorP Prediction", "Length (aa)"]
+    with open(output_csv, 'w') as f_all, open(filtered_csv, 'w') as f_filtered:
+        writer_all = csv.writer(f_all)
+        writer_filtered = csv.writer(f_filtered)
+        header = ["Protein ID", "SignalP", "TMHMM", "EffectorP", "Length"]
         writer_all.writerow(header)
         writer_filtered.writerow(header)
 
-        for protein_id in lengths:
-            signal = "Yes" if protein_id in signalp_hits else "No"
-            tm = "Yes" if protein_id in tmhmm_hits else "No"
-            effector = "Effector" if protein_id in effector_ids else "Non-effector"
-            length = lengths[protein_id]
-
-            if signal == "Yes":
-                n_signal += 1
-            if tm == "Yes":
-                n_tm += 1
-            if effector == "Effector":
-                n_effector += 1
-
-            row = [protein_id, signal, tm, effector, length]
+        for pid in lengths:
+            row = [pid, 
+                   'Yes' if pid in signalp else 'No',
+                   'Yes' if pid in tmhmm else 'No',
+                   'Effector' if pid in effectors else 'Non-effector',
+                   lengths[pid]]
             writer_all.writerow(row)
-
-            if signal == "Yes" and tm == "No" and effector == "Effector":
+            
+            if pid in signalp and pid not in tmhmm and pid in effectors:
                 writer_filtered.writerow(row)
-                n_final_candidates += 1
+                stats['final'].append(pid)
 
-    summary = f"""
-Summary of Results
-==================
-Total proteins analyzed:          {total}
-Proteins with signal peptide:     {n_signal}
-Proteins with TM domains:         {n_tm}
-Proteins predicted as effectors:  {n_effector}
-Final secreted effector candidates (SignalP+EffectorP - TMHMM): {n_final_candidates}
-"""
+    # Plot generation
+    plot_summary(total, stats['signal'], stats['tm'], stats['effector'], len(stats['final']))
+    plot_length_distribution(lengths, stats['final'])
+    plot_venn_diagram(signalp, tmhmm, effectors)
+    plot_feature_correlation(lengths, signalp, tmhmm, effectors)
+
+    # Text summary
+    summary = f"""Summary of Results:
+Total proteins: {total}
+With signal peptide: {stats['signal']}
+With TM domains: {stats['tm']}
+EffectorP effectors: {stats['effector']}
+Final candidates: {len(stats['final'])}"""
+    
+    with open(summary_file, 'w') as f:
+        f.write(summary)
     print(summary)
-    if summary_file:
-        with open(summary_file, "w") as f:
-            f.write(summary)
-
-    plot_summary(total, n_signal, n_tm, n_effector, n_final_candidates)
 
 if __name__ == "__main__":
+    # Path configuration
     base_dir = "."
+    files = {
+        'fasta': glob.glob(os.path.join(base_dir, "moniliophthora_filtered_split_*.fasta")),
+        'signalp': glob.glob(os.path.join(base_dir, "signal_results*", "*.gff3")),
+        'tmhmm': glob.glob(os.path.join(base_dir, "TMRs_*.gff3")),
+        'effector': glob.glob(os.path.join(base_dir, "EffectorCandidates_*.fasta"))
+    }
 
-    fasta_inputs = glob.glob(os.path.join(base_dir, "moniliophthora_filtered_split_*.fasta"))
-    signalp_gffs = glob.glob(os.path.join(base_dir, "signal_results*", "*.gff3"))
-    tmhmm_gffs = glob.glob(os.path.join(base_dir, "TMRs_*.gff3"))
-    effector_fastas = glob.glob(os.path.join(base_dir, "EffectorCandidates_*.fasta"))
+    # Data loading
+    print("Loading data")
+    data = {
+        'lengths': load_lengths(files['fasta']),
+        'signalp': load_signalp_predictions(files['signalp']),
+        'tmhmm': load_tmhmm_predictions(files['tmhmm']),
+        'effectors': load_effector_predictions(files['effector'])
+    }
 
-    print("Reading sequences and lengths...")
-    lengths = load_lengths(fasta_inputs)
-
-    print("Reading SignalP predictions...")
-    signalp_hits = load_signalp_predictions(signalp_gffs)
-
-    print("Reading TMHMM predictions...")
-    tmhmm_hits = load_tmhmm_predictions(tmhmm_gffs)
-
-    print("Reading EffectorP predictions...")
-    effector_ids = load_effector_predictions(effector_fastas)
-
-    print("Integrating results and generating plot...")
+    # Processing and integration
+    print("Generating outputs...")
     integrate_data(
-        lengths,
-        signalp_hits,
-        tmhmm_hits,
-        effector_ids,
-        output_csv="integrated_results.csv",
-        filtered_csv="filtered_effectors.csv",
-        summary_file="summary.txt"
+        data['lengths'],
+        data['signalp'],
+        data['tmhmm'],
+        data['effectors'],
+        "integrated_results.csv",
+        "filtered_effectors.csv",
+        "summary.txt"
     )
-
-    print("Done")
+    print("Done.")
