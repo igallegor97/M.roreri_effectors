@@ -96,6 +96,7 @@ This will generate:
 To be considered a secreted effector, a protein must:
 
 - Have a signal peptide (SignalP = Yes)
+- 
 
 - Not contain transmembrane domains (DeepTMHMM = No)
 
